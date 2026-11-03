@@ -1,0 +1,60 @@
+services:
+  milo-atlas:
+    build:
+      context: ..
+      dockerfile: milo-atlas/Dockerfile
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      ATLAS_PORT: "8083"
+      ATLAS_DB_URL: ${ATLAS_DB_URL:-jdbc:postgresql://127.0.0.1:5432/staticdb?sslmode=disable}
+      ATLAS_DB_USERNAME: ${ATLAS_DB_USERNAME:-staticdb_app}
+      ATLAS_DB_PASSWORD: ${ATLAS_DB_PASSWORD:?Set ATLAS_DB_PASSWORD in the untracked .env file}
+      ATLAS_CORS_ALLOWED_ORIGINS: ${ATLAS_CORS_ALLOWED_ORIGINS:-https://milobroker.com,https://www.milobroker.com,http://localhost:5173,http://127.0.0.1:4173}
+      LOG_PATH: /app/logs
+    volumes:
+      - milo-atlas-logs:/app/logs
+
+  milo-marketplace:
+    build:
+      context: ..
+      dockerfile: milo-marketplace/Dockerfile
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      MARKETPLACE_PORT: "8082"
+      MARKETPLACE_DB_URL: ${MARKETPLACE_DB_URL:-jdbc:postgresql://127.0.0.1:5432/bizdb?sslmode=disable}
+      MARKETPLACE_DB_USERNAME: ${MARKETPLACE_DB_USERNAME:-bizdb_app}
+      MARKETPLACE_DB_PASSWORD: ${MARKETPLACE_DB_PASSWORD:?Set MARKETPLACE_DB_PASSWORD in the untracked .env file}
+      LOG_PATH: /app/logs
+    volumes:
+      - milo-marketplace-logs:/app/logs
+
+  milo-concierge:
+    build:
+      context: ..
+      dockerfile: milo-concierge/Dockerfile
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      CONCIERGE_PORT: "8081"
+      CONCIERGE_DB_URL: ${CONCIERGE_DB_URL:-jdbc:postgresql://127.0.0.1:5432/conciergedb?sslmode=disable}
+      CONCIERGE_DB_USERNAME: ${CONCIERGE_DB_USERNAME:-concierge_app}
+      CONCIERGE_DB_PASSWORD: ${CONCIERGE_DB_PASSWORD:?Set CONCIERGE_DB_PASSWORD in the untracked .env file}
+      MARKETPLACE_BASE_URL: ${MARKETPLACE_BASE_URL:-http://127.0.0.1:8082}
+      ATLAS_BASE_URL: ${ATLAS_BASE_URL:-http://127.0.0.1:8083}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-change-me}
+      WHATSAPP_API_TOKEN: ${WHATSAPP_API_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_ONBOARDING_FLOW_ID: ${WHATSAPP_ONBOARDING_FLOW_ID:-}
+      WHATSAPP_API_BASE_URL: ${WHATSAPP_API_BASE_URL:-https://graph.facebook.com/v21.0}
+      FLOW_PRIVATE_KEY_PEM: ${FLOW_PRIVATE_KEY_PEM:-}
+      LOG_PATH: /app/logs
+    volumes:
+      - milo-concierge-logs:/app/logs
+
+volumes:
+  milo-atlas-logs:
+  milo-marketplace-logs:
+  milo-concierge-logs:
+

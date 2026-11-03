@@ -1,0 +1,61 @@
+# Linux EC2 only. Nginx and PostgreSQL run on the same host.
+# Run from repository root with: docker compose -f infra/middleware.production.compose.yaml ...
+x-runtime: &runtime
+  network_mode: host
+  restart: unless-stopped
+  mem_limit: 768m
+  environment:
+    JAVA_TOOL_OPTIONS: "-Xms128m -Xmx384m -Duser.timezone=UTC"
+    LOG_PATH: /app/logs
+  command:
+    - --spring.profiles.active=prod
+    - --spring.config.import=file:/app/.env.prod[.properties]
+    - --server.address=127.0.0.1
+    - --server.forward-headers-strategy=native
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  milo-atlas:
+    <<: *runtime
+    image: milo-atlas:deploy
+    volumes:
+      - type: bind
+        source: ../.env.prod
+        target: /app/.env.prod
+        read_only: true
+        bind:
+          create_host_path: false
+      - milo-atlas-logs:/app/logs
+
+  milo-marketplace:
+    <<: *runtime
+    image: milo-marketplace:deploy
+    volumes:
+      - type: bind
+        source: ../.env.prod
+        target: /app/.env.prod
+        read_only: true
+        bind:
+          create_host_path: false
+      - milo-marketplace-logs:/app/logs
+
+  milo-concierge:
+    <<: *runtime
+    image: milo-concierge:deploy
+    volumes:
+      - type: bind
+        source: ../.env.prod
+        target: /app/.env.prod
+        read_only: true
+        bind:
+          create_host_path: false
+      - milo-concierge-logs:/app/logs
+
+volumes:
+  milo-atlas-logs:
+  milo-marketplace-logs:
+  milo-concierge-logs:
