@@ -1,0 +1,38 @@
+spring:
+  application.name: milo-concierge
+  profiles.default: local
+  config:
+    import:
+      - "optional:file:../.env.${spring.profiles.active:local}[.properties]"
+      - "optional:file:./.env.${spring.profiles.active:local}[.properties]"
+  datasource:
+    url: ${CONCIERGE_DB_URL:jdbc:postgresql://localhost:5432/conciergedb}
+    username: ${CONCIERGE_DB_USERNAME:concierge_app}
+    password: ${CONCIERGE_DB_PASSWORD:milobroker-local}
+  jpa:
+    open-in-view: false
+    hibernate.ddl-auto: none
+  logging:
+    file.path: ${LOG_PATH:logs}
+server:
+  port: ${CONCIERGE_PORT:8081}
+  shutdown: graceful
+management:
+  endpoints.web.exposure.include: health,info,metrics,prometheus
+  endpoint.health.probes.enabled: true
+milobroker:
+  downstream:
+    marketplace-base-url: ${MARKETPLACE_BASE_URL:http://localhost:8082}
+    atlas-base-url: ${ATLAS_BASE_URL:http://localhost:8083}
+  meta:
+    enabled: ${META_MODEL_ENABLED:false}
+    base-url: ${META_MODEL_BASE_URL:https://api.meta.ai/v1}
+    api-key: ${MODEL_API_KEY:}
+  whatsapp:
+    verify-token: ${WHATSAPP_VERIFY_TOKEN:change-me}
+    api-token: ${WHATSAPP_API_TOKEN:}
+    phone-number-id: ${WHATSAPP_PHONE_NUMBER_ID:}
+    onboarding-flow-id: ${WHATSAPP_ONBOARDING_FLOW_ID:}
+    api-base-url: ${WHATSAPP_API_BASE_URL:https://graph.facebook.com/v21.0}
+  flow:
+    private-key-pem: ${FLOW_PRIVATE_KEY_PEM:}
