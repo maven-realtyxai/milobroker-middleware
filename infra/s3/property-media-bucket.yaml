@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Private S3 storage for MiloBroker listing images and videos.
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: Globally unique name for the private listing media bucket.
+    MinLength: 3
+    MaxLength: 63
+    AllowedPattern: '^[a-z0-9][a-z0-9.-]*[a-z0-9]$'
+  SiteOrigins:
+    Type: CommaDelimitedList
+    Default: https://milobroker.com,https://www.milobroker.com,http://localhost:5173,http://127.0.0.1:4173
+    Description: Exact browser origins allowed to use pre-signed listing media URLs.
+
+Resources:
+  PropertyMediaBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: !Ref SiteOrigins
+            AllowedMethods: [GET, HEAD, PUT]
+            AllowedHeaders: ['*']
+            ExposedHeaders: [ETag]
+            MaxAge: 1800
+      LifecycleConfiguration:
+        Rules:
+          - Id: AbortIncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+
+  RequireTlsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PropertyMediaBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt PropertyMediaBucket.Arn
+              - !Sub '${PropertyMediaBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  MarketplaceMediaAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Least-privilege object access for MiloBroker listing media.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ReadAndWriteListingMedia
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+            Resource: !Sub '${PropertyMediaBucket.Arn}/listings/*'
+
+Outputs:
+  BucketName:
+    Value: !Ref PropertyMediaBucket
+  BucketArn:
+    Value: !GetAtt PropertyMediaBucket.Arn
+  MarketplaceMediaAccessPolicyArn:
+    Value: !Ref MarketplaceMediaAccessPolicy

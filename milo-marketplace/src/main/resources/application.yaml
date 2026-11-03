@@ -1,0 +1,22 @@
+spring:
+  application.name: milo-marketplace
+  profiles.default: local
+  config:
+    import:
+      - "optional:file:../.env.${spring.profiles.active:local}[.properties]"
+      - "optional:file:./.env.${spring.profiles.active:local}[.properties]"
+  datasource:
+    url: ${MARKETPLACE_DB_URL:jdbc:postgresql://localhost:5432/bizdb}
+    username: ${MARKETPLACE_DB_USERNAME:bizdb_app}
+    password: ${MARKETPLACE_DB_PASSWORD:milobroker-local}
+  jpa:
+    open-in-view: false
+    hibernate.ddl-auto: none
+  logging:
+    file.path: ${LOG_PATH:logs}
+server:
+  port: ${MARKETPLACE_PORT:8082}
+  shutdown: graceful
+management:
+  endpoints.web.exposure.include: health,info,metrics,prometheus
+  endpoint.health.probes.enabled: true
