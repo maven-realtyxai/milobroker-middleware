@@ -173,7 +173,12 @@ public class ConversationRouter {
         .retrieve().body(String.class);
       List<JsonObject> results = resultsOf(json);
       if (results.isEmpty()) {
-        return false;
+        String place = locality.isEmpty() ? "that area"
+          : locality.substring(0, 1).toUpperCase(Locale.ROOT)
+            + locality.substring(1).toLowerCase(Locale.ROOT).replace('_', ' ');
+        whatsapp.sendText(from, "Hi " + greet + "! There are currently no properties listed in "
+          + place + ". Reply REFINE with a different locality or budget and I'll look again.");
+        return true;
       }
       StringBuilder out = new StringBuilder("Hi " + greet
         + "! Here are some options:");
