@@ -56,6 +56,28 @@ class MetaModelClientTest {
   }
 
   @Test
+  void nullContentIsRejectedWithoutTreatingItAsText() {
+    String json = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null},\"finish_reason\":\"length\"}]}";
+    ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+      () -> client.parseReply(json));
+    assertEquals(HttpStatus.BAD_GATEWAY, ex.getStatusCode());
+  }
+
+  @Test
+  void classifiesAmbiguousLocationUsingModelAndContext() {
+    var builder = RestClient.builder();
+    var server = org.springframework.test.web.client.MockRestServiceServer.bindTo(builder).build();
+    server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo("https://api.meta.ai/v1/chat/completions"))
+      .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.content().string(
+        org.hamcrest.Matchers.containsString("recent_conversation")))
+      .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+        "{\"choices\":[{\"message\":{\"content\":\"PROPERTY\"}}]}", org.springframework.http.MediaType.APPLICATION_JSON));
+    var classifier = new MetaModelClient(builder, "https://api.meta.ai/v1", "key", "test-model", "", 0.3, 300);
+    assertEquals(ModelClient.Relevance.PROPERTY, classifier.classifyProperty("Devanahalli", "Milo: Which locality?"));
+    server.verify();
+  }
+
+  @Test
   void chatWithoutConfigIsUnavailable() {
     MetaModelClient off = new MetaModelClient(RestClient.builder(), "https://x", "",
       "m", "", 0.3, 300);

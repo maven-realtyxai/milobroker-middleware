@@ -32,7 +32,7 @@ public class InputGuardrailService {
     + "- rentals, purchases, or listing your property.";
 
   private static final Set<String> ALLOW_TERMS = Set.of(
-    "rent", "rental", "buy", "purchase", "sale", "sell", "list", "listing",
+    "rent", "rental", "buy", "purchase", "sale", "sell", "list", "listing", "post", "property",
     "plot", "flat", "apartment", "house", "villa", "pg", "room", "floor",
     "bedroom", "bhk", "bath", "furnish", "kitchen", "balcony", "parking",
     "price", "budget", "lakh", "crore", "deposit", "agreement", "loan", "emi",
@@ -124,7 +124,9 @@ public class InputGuardrailService {
     if (containsAny(norm, ALLOW_TERMS)) {
       return new Verdict(Decision.ALLOW, null);
     }
-    return new Verdict(Decision.OFF_TOPIC, OFF_TOPIC_CLARITY);
+    // Short follow-ups such as locality names and budgets need conversation context.
+    // Explicitly harmful and off-topic inputs have already been checked above.
+    return new Verdict(Decision.ALLOW, null);
   }
 
   public static boolean isVoiceType(String messageType) {
@@ -137,7 +139,7 @@ public class InputGuardrailService {
 
   private static final Set<String> OFF_TOPIC_TERMS = Set.of(
     "stocks", "stock market", "share market", "mutual fund", "crypto", "bitcoin",
-    "gamble", "gambling", "lottery", "casino", "trading", "forex");
+    "gamble", "gambling", "lottery", "casino", "trading", "forex", "homework");
 
   private static boolean isGreeting(String norm) {
     for (String g : GREETINGS) {

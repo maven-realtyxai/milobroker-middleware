@@ -55,11 +55,72 @@ class ConversationRouterPostTest {
   void postKeywordRoutesToPostFlow() {
     when(onboarding.profile("911234567890")).thenReturn(completed());
     when(postFlow.isInProgress("911234567890")).thenReturn(false);
-    router.reply("911234567890", "Ravi", "I want to list my property", "text");
+    router.reply("911234567890", "Ravi", "I need to post a property", "text");
     verify(postFlow).handle(eq("911234567890"), eq("Ravi"),
-      eq("I want to list my property"), eq("text"));
+      eq("I need to post a property"), eq("text"));
     verify(model, never()).chat(any());
+    verify(model, never()).classifyProperty(any(), any());
     verify(whatsapp, never()).sendText(any(), any());
+  }
+
+  @Test
+  void shortLocationIsRememberedForFollowUpSearch() throws IOException {
+    stub = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    var request = new java.util.concurrent.atomic.AtomicReference<String>();
+    stub.createContext("/api/v1/search", exchange -> {
+      request.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+      byte[] out = "{\"results\":[],\"total\":0}".getBytes(StandardCharsets.UTF_8);
+      exchange.getResponseHeaders().add("Content-Type", "application/json");
+      exchange.sendResponseHeaders(200, out.length);
+      try (OutputStream os = exchange.getResponseBody()) { os.write(out); }
+    });
+    stub.start();
+    router = new ConversationRouter(onboarding, whatsapp, new InputGuardrailService(), model,
+      chat, postFlow, new OutputGuardrailService(), RestClient.builder(),
+      "http://127.0.0.1:" + stub.getAddress().getPort());
+    var memory = org.mockito.Mockito.mock(ConversationMemory.class);
+    router.setConversationMemory(memory);
+    when(onboarding.profile("911234567890")).thenReturn(completed());
+    when(memory.locality("911234567890")).thenReturn("DEVANAHALLI");
+    router.reply("911234567890", "Ravi", "Devanahalli, blr", "text");
+    verify(memory).rememberLocality("911234567890", "DEVANAHALLI");
+    router.reply("911234567890", "Ravi", "2 bhk house for rent", "text");
+    org.junit.jupiter.api.Assertions.assertTrue(request.get().contains("\"localityCode\":\"DEVANAHALLI\""));
+    org.junit.jupiter.api.Assertions.assertTrue(request.get().contains("\"bedrooms\":2"));
+  }
+
+  @Test
+  void searchAsksForMissingLocalityThenUsesItOnNextMessage() throws IOException {
+    stub = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    var request = new java.util.concurrent.atomic.AtomicReference<String>();
+    stub.createContext("/api/v1/search", exchange -> {
+      request.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+      byte[] out = "{\"results\":[],\"total\":0}".getBytes(StandardCharsets.UTF_8);
+      exchange.getResponseHeaders().add("Content-Type", "application/json");
+      exchange.sendResponseHeaders(200, out.length);
+      try (OutputStream os = exchange.getResponseBody()) { os.write(out); }
+    });
+    stub.start();
+    router = new ConversationRouter(onboarding, whatsapp, new InputGuardrailService(), model,
+      chat, postFlow, new OutputGuardrailService(), RestClient.builder(),
+      "http://127.0.0.1:" + stub.getAddress().getPort());
+    var memory = org.mockito.Mockito.mock(ConversationMemory.class);
+    var locality = new java.util.concurrent.atomic.AtomicReference<String>();
+    var pending = new java.util.concurrent.atomic.AtomicReference<String>();
+    org.mockito.Mockito.doAnswer(i -> { locality.set(i.getArgument(1)); return null; })
+      .when(memory).rememberLocality(any(), any());
+    org.mockito.Mockito.doAnswer(i -> { pending.set(i.getArgument(1)); return null; })
+      .when(memory).savePendingSearch(any(), org.mockito.ArgumentMatchers.nullable(String.class));
+    when(memory.locality(any())).thenAnswer(i -> locality.get());
+    when(memory.pendingSearch(any())).thenAnswer(i -> pending.get());
+    router.setConversationMemory(memory);
+    when(onboarding.profile("911234567890")).thenReturn(completed());
+    router.reply("911234567890", "Ravi", "2 bhk house for rent", "text");
+    verify(whatsapp).sendText(eq("911234567890"), contains("Which locality"));
+    router.reply("911234567890", "Ravi", "Devanahalli, BLR", "text");
+    org.junit.jupiter.api.Assertions.assertTrue(request.get().contains("\"localityCode\":\"DEVANAHALLI\""));
+    org.junit.jupiter.api.Assertions.assertTrue(request.get().contains("\"bedrooms\":2"));
+    org.junit.jupiter.api.Assertions.assertNull(pending.get());
   }
 
   @Test
@@ -136,7 +197,7 @@ class ConversationRouterPostTest {
     when(onboarding.profile("911234567890")).thenReturn(completed());
     when(postFlow.isInProgress("911234567890")).thenReturn(false);
     router.reply("911234567890", "Ravi", "2bhk rent in Whitefield", "text");
-    verify(whatsapp).sendText(eq("911234567890"), contains("no properties listed in Whitefield"));
+    verify(whatsapp).sendText(eq("911234567890"), contains("couldn't find a match for those filters in Whitefield"));
     verify(model, never()).chat(any());
   }
 
