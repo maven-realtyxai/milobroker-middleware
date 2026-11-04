@@ -9,7 +9,7 @@ COPY milo-concierge/src milo-concierge/src
 RUN mvn -q -pl milo-concierge -am package -DskipTests
 
 FROM eclipse-temurin:25-jre
-RUN useradd -r -u 10001 appuser && mkdir -p /app/logs && chown appuser:appuser /app/logs
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/* && useradd -r -u 10001 appuser && mkdir -p /app/logs && chown appuser:appuser /app/logs
 USER appuser
 WORKDIR /app
 COPY --from=build /workspace/milo-concierge/target/milo-concierge-*.jar app.jar

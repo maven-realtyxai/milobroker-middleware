@@ -419,30 +419,20 @@ public class ChatOnboardingService {
   }
 
   private String statePrompt() {
-    List<String> options = new ArrayList<>();
-    for (AtlasState state : atlas.states()) {
-      options.add(state.displayName() + " (" + state.code() + ")");
-    }
-    if (options.isEmpty()) {
+    List<AtlasState> states = atlas.states();
+    if (states.isEmpty()) {
       return "Which state are you looking in? Just reply with the state name or code.";
     }
-    return "Which state are you looking in? Options: " + String.join(", ", options)
-      + ". Just reply with the code or name.";
+    return "Which state are you looking in? Just type the state name or code (e.g. Karnataka).";
   }
 
   private String cityPrompt(String stateCode) {
     String where = stateDisplay(stateCode);
-    List<String> options = new ArrayList<>();
-    if (stateCode != null) {
-      for (AtlasCity city : atlas.cities(stateCode)) {
-        options.add(city.displayName() + " (" + city.code() + ")");
-      }
-    }
-    if (options.isEmpty()) {
+    List<AtlasCity> cities = stateCode == null ? List.of() : atlas.cities(stateCode);
+    if (cities.isEmpty()) {
       return "Which city in " + where + "? Just reply with the city name or code.";
     }
-    return "Which city in " + where + "? Options: " + String.join(", ", options)
-      + ". Just reply with the code or name.";
+    return "Which city in " + where + "? Just type the city name or code.";
   }
 
   private static String termsPrompt(String name) {

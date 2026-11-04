@@ -118,6 +118,29 @@ class ConversationRouterPostTest {
   }
 
   @Test
+  void emptySearchSendsGracefulNotice() throws IOException {
+    String payload = "{\"appliedFilters\":{},\"results\":[],\"total\":0}";
+    stub = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    stub.createContext("/api/v1/search", exchange -> {
+      byte[] out = payload.getBytes(StandardCharsets.UTF_8);
+      exchange.getResponseHeaders().add("Content-Type", "application/json");
+      exchange.sendResponseHeaders(200, out.length);
+      try (OutputStream os = exchange.getResponseBody()) {
+        os.write(out);
+      }
+    });
+    stub.start();
+    router = new ConversationRouter(onboarding, whatsapp, new InputGuardrailService(), model,
+      chat, postFlow, new OutputGuardrailService(), RestClient.builder(),
+      "http://127.0.0.1:" + stub.getAddress().getPort());
+    when(onboarding.profile("911234567890")).thenReturn(completed());
+    when(postFlow.isInProgress("911234567890")).thenReturn(false);
+    router.reply("911234567890", "Ravi", "2bhk rent in Whitefield", "text");
+    verify(whatsapp).sendText(eq("911234567890"), contains("no properties listed in Whitefield"));
+    verify(model, never()).chat(any());
+  }
+
+  @Test
   void incompleteUserDelegatesToOnboardingChat() {
     when(onboarding.profile("911234567890")).thenReturn(
       new ProfileDto("911234567890", null, null, null, null, false));

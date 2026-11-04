@@ -6,8 +6,10 @@ import com.milobroker.concierge.service.ChatOnboardingService;
 import com.milobroker.concierge.service.ConversationRouter;
 import com.milobroker.concierge.service.InputGuardrailService;
 import com.milobroker.concierge.service.OnboardingService;
+import com.milobroker.concierge.service.RateLimiterService;
 import com.milobroker.concierge.service.WhatsAppClient;
 import com.milobroker.concierge.service.UserDeletionService;
+import com.milobroker.concierge.service.VoiceNoteService;
 import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
 import org.slf4j.Logger;
@@ -35,11 +37,14 @@ public class WhatsAppWebhookController {
   private final ConversationRouter router;
   private final UserDeletionService deletion;
   private final ChatOnboardingService chat;
+  private final VoiceNoteService voiceNotes;
+  private final RateLimiterService rateLimiter;
   @org.springframework.beans.factory.annotation.Autowired
   public WhatsAppWebhookController(
       @Value("${milobroker.whatsapp.verify-token:change-me}") String verifyToken,
       OnboardingService onboarding, WhatsAppClient whatsapp, InputGuardrailService guardrail,
-      ConversationRouter router, UserDeletionService deletion, ChatOnboardingService chat) {
+      ConversationRouter router, UserDeletionService deletion, ChatOnboardingService chat,
+      VoiceNoteService voiceNotes, RateLimiterService rateLimiter) {
     this.verifyToken = verifyToken;
     this.onboarding = onboarding;
     this.whatsapp = whatsapp;
@@ -47,6 +52,18 @@ public class WhatsAppWebhookController {
     this.router = router;
     this.deletion = deletion;
     this.chat = chat;
+    this.voiceNotes = voiceNotes;
+    this.rateLimiter = rateLimiter;
+  }
+  public WhatsAppWebhookController(String verifyToken, OnboardingService onboarding,
+      WhatsAppClient whatsapp, InputGuardrailService guardrail, ConversationRouter router,
+      UserDeletionService deletion, ChatOnboardingService chat, VoiceNoteService voiceNotes) {
+    this(verifyToken, onboarding, whatsapp, guardrail, router, deletion, chat, voiceNotes, null);
+  }
+  public WhatsAppWebhookController(String verifyToken, OnboardingService onboarding,
+      WhatsAppClient whatsapp, InputGuardrailService guardrail, ConversationRouter router,
+      UserDeletionService deletion, ChatOnboardingService chat) {
+    this(verifyToken, onboarding, whatsapp, guardrail, router, deletion, chat, null, null);
   }
   public WhatsAppWebhookController(String verifyToken, OnboardingService onboarding,
       WhatsAppClient whatsapp, InputGuardrailService guardrail, ConversationRouter router,
@@ -109,6 +126,18 @@ public class WhatsAppWebhookController {
       if (from == null || from.isBlank()) {
         continue;
       }
+      if (rateLimiter != null) {
+        var limit = rateLimiter.tryAcquire(from);
+        if (limit == RateLimiterService.Result.NOTIFY_AND_DROP) {
+          whatsapp.sendText(from, "You've sent " + rateLimiter.maxPerWindow()
+            + " messages in the last hour, so I'm pausing replies for the next hour. "
+            + "Please try again later.");
+          continue;
+        }
+        if (limit == RateLimiterService.Result.DROP_SILENTLY) {
+          continue;
+        }
+      }
       String flowReply = Jsons.string(
         Jsons.object(Jsons.object(message, "interactive"), "nfm_reply"), "response_json");
       if (flowReply != null) {
@@ -116,6 +145,12 @@ public class WhatsAppWebhookController {
       } else {
         String messageType = Jsons.string(message, "type");
         String body = Jsons.string(Jsons.object(message, "text"), "body");
+        if (body == null && voiceNotes != null) {
+          body = voiceNotes.transcribeMessage(message).orElse(null);
+          if (body != null) {
+            messageType = "text";
+          }
+        }
         if (handleDeletion(from, messageType, body)) continue;
         if (onboarding.profile(from).completed()) {
           router.reply(from, senderName, body, messageType);
