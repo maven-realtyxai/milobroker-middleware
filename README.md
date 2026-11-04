@@ -27,8 +27,8 @@ Rules that shape the whole repo:
 
 Key endpoints:
 
-* Concierge: `POST /api/v1/whatsapp/webhook`, `POST /api/v1/flows/onboarding`
-* Marketplace: `/api/v1/onboarding/profiles`, `POST /api/v1/search`
+* Concierge: `GET+POST /api/v1/whatsapp/webhook`, `POST /api/v1/flows/onboarding` (internal, proxy-blocked: `/api/v1/concierge/messages`, webhook `/profile`)
+* Marketplace: `/api/v1/onboarding/profiles`, `/api/v1/search`, `/api/v1/listings` (+ moderation, media)
 * Atlas: `/api/v1/geo/countries`, `/api/v1/geo/states?countryIso2=IN`,
   `/api/v1/geo/cities?state=KA`, `/api/contact?countryIso2=IN`
 * Health: `/actuator/health` on each service's port.
@@ -82,6 +82,8 @@ psql -h localhost -U staticdb_app -d staticdb -f docs/V1_staticdb.sql
 psql -h localhost -U staticdb_app -d staticdb -f docs/V2_staticdb_whatsapp_contact.sql
 psql -h localhost -U bizdb_app -d bizdb -f docs/V2_bizdb.sql
 psql -h localhost -U bizdb_app -d bizdb -f docs/V3_bizdb_property_listings.sql
+psql -h localhost -U bizdb_app -d bizdb -f docs/V4_bizdb_moderation.sql
+psql -h localhost -U bizdb_app -d bizdb -f docs/V5_bizdb_leads.sql
 ```
 
 Local bootstrap credentials are user `milobroker`, password
@@ -158,8 +160,8 @@ container deploy they live on per-service Docker volumes at `/app/logs` (see
 For the shared HTTPS endpoint and routing to all three services, see
 [api.milobroker.com deployment](docs/api-domain-deploy.md).
 
-Deploy steps, the `../.env` keys, the S3 media-bucket stack, and reverse-proxy
-notes are in [middleware deploy](docs/middleware-deploy.md). EC2 database
+Deploy steps, the `.env.prod` keys, the S3 media-bucket stack, and reverse-proxy
+notes are in [api.milobroker.com deployment](docs/api-domain-deploy.md). EC2 database
 passwords come from SSM SecureString parameters `/milobroker/mb_*_pw`.
 
 ## Troubleshooting

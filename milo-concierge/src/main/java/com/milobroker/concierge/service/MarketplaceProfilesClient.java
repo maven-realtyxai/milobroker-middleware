@@ -5,5 +5,6 @@ public interface MarketplaceProfilesClient {
   ProfileDto fetch(String channelUserId);
   boolean claimWelcome(String channelUserId, String displayName);
   void releaseWelcome(String channelUserId);
-  ProfileDto save(String channelUserId, String displayName, String intent, String stateCode, String cityCode);
+  ProfileDto save(String channelUserId, String displayName, String intent, String stateCode, String cityCode,
+      boolean termsAccepted);
 }

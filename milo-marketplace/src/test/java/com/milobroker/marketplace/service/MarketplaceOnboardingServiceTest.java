@@ -38,15 +38,23 @@ class MarketplaceOnboardingServiceTest {
     when(profiles.findById("user-1")).thenReturn(Optional.empty());
     when(profiles.save(any())).thenAnswer(inv -> inv.getArgument(0));
     var saved = service.save("user-1",
-      new SaveProfileRequest("Asha", "RENTAL", "KA", "BLR"));
+      new SaveProfileRequest("Asha", "RENTAL", "KA", "BLR", true));
     assertTrue(saved.completed());
     assertEquals("Asha", saved.displayName());
-    verify(profiles).save(any(OnboardingProfile.class));
+    verify(profiles).save(org.mockito.ArgumentMatchers.argThat(
+      profile -> profile.getTermsAcceptedAt() != null));
   }
 
   @Test
   void blankFieldsAreRejected() {
     assertThrows(ResponseStatusException.class, () -> service.save("user-1",
-      new SaveProfileRequest(" ", "RENTAL", "KA", "BLR")));
+      new SaveProfileRequest(" ", "RENTAL", "KA", "BLR", true)));
+  }
+
+  @Test
+  void saveRejectsMissingTermsConsent() {
+    assertThrows(ResponseStatusException.class, () -> service.save("user-1",
+      new SaveProfileRequest("Asha", "RENTAL", "KA", "BLR", false)));
+    verify(profiles, org.mockito.Mockito.never()).save(any());
   }
 }

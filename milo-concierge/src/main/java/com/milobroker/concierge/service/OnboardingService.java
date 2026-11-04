@@ -15,11 +15,22 @@ import org.springframework.web.server.ResponseStatusException;
  */
 @Service
 public class OnboardingService {
-  private static final Map<String, String> INTENTS = Map.of(
-    "FIND A RENTAL", "RENTAL",
-    "BUY A PROPERTY", "BUY",
-    "LIST A PROPERTY", "LIST",
-    "I'M AN AGENT", "AGENT");
+  private static final Map<String, String> INTENTS = Map.ofEntries(
+    Map.entry("FIND A RENTAL", "RENTAL"),
+    Map.entry("RENT", "RENTAL"),
+    Map.entry("POST A PROPERTY", "LIST"),
+    Map.entry("RENTAL", "RENTAL"),
+    Map.entry("BUY", "BUY"),
+    Map.entry("BUY A PROPERTY", "BUY"),
+    Map.entry("PURCHASE", "BUY"),
+    Map.entry("SALE", "BUY"),
+    Map.entry("POST", "LIST"),
+    Map.entry("LIST", "LIST"),
+    Map.entry("SELL", "LIST"),
+    Map.entry("AGENT", "AGENT"),
+    Map.entry("BROKER", "AGENT"),
+    Map.entry("I'M AN AGENT", "AGENT"),
+    Map.entry("IM AN AGENT", "AGENT"));
   private final MarketplaceProfilesClient profiles;
   private final AtlasGeoClient atlas;
   public OnboardingService(MarketplaceProfilesClient profiles, AtlasGeoClient atlas) {
@@ -33,10 +44,10 @@ public class OnboardingService {
   /** Role options are served dynamically by the Flow endpoint. */
   public List<OptionDto> roles() {
     return List.of(
-      new OptionDto("RENTAL", "Find a rental"),
-      new OptionDto("BUY", "Buy a property"),
-      new OptionDto("LIST", "List a property"),
-      new OptionDto("AGENT", "I'm an agent"));
+      new OptionDto("RENTAL", "Rent"),
+      new OptionDto("BUY", "Buy"),
+      new OptionDto("LIST", "Post a property"),
+      new OptionDto("AGENT", "Agent"));
   }
   public List<OptionDto> cities(String stateCode) {
     String code = requireState(stateCode);
@@ -63,10 +74,13 @@ public class OnboardingService {
     if (request.displayName() == null || request.displayName().isBlank()) {
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Full name is required");
     }
+    if (!Boolean.TRUE.equals(request.termsAccepted())) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Terms must be accepted");
+    }
     String intent = normalizeIntent(request.intent());
     String stateCode = requireState(request.stateCode());
     String cityCode = requireCity(stateCode, request.cityCode());
-    return profiles.save(channelUserId, request.displayName().trim(), intent, stateCode, cityCode);
+    return profiles.save(channelUserId, request.displayName().trim(), intent, stateCode, cityCode, true);
   }
   private String normalizeIntent(String intent) {
     if (intent == null || intent.isBlank()) {

@@ -9,12 +9,15 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.server.ResponseStatusException;
 /** Stable error body for Concierge APIs, built with JSON-P. */
 @RestControllerAdvice
 public class ConciergeApiExceptionHandler {
+  private static final Logger log = LoggerFactory.getLogger(ConciergeApiExceptionHandler.class);
   @ExceptionHandler(ResponseStatusException.class)
   public ResponseEntity<String> responseStatus(ResponseStatusException ex, HttpServletRequest request) {
     return body(ex.getStatusCode().value(), ex.getReason(), request);
@@ -27,6 +30,7 @@ public class ConciergeApiExceptionHandler {
   }
   @ExceptionHandler(Exception.class)
   public ResponseEntity<String> unexpected(Exception ex, HttpServletRequest request) {
+    log.warn("Unhandled concierge failure for {}: {}", request.getRequestURI(), ex.toString(), ex);
     return body(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Concierge request failed", request);
   }
   private ResponseEntity<String> body(int status, String message, HttpServletRequest request) {
