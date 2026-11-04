@@ -5,7 +5,8 @@ public final class OnboardingDtos {
   public record OptionDto(String id, String title) {}
   public record ProfileDto(String channelUserId, String displayName, String intent,
       String stateCode, String cityCode, boolean completed) {}
-  public record CompletionRequest(String displayName, String intent, String stateCode, String cityCode) {}
+  public record CompletionRequest(String displayName, String intent, String stateCode, String cityCode,
+      Boolean termsAccepted) {}
   public record AtlasState(String code, String displayName) {}
   public record AtlasCity(String code, String displayName, String stateCode) {}
 }

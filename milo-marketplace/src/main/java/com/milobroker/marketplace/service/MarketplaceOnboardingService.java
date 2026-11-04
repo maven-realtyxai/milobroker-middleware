@@ -1,6 +1,7 @@
 package com.milobroker.marketplace.service;
 import com.milobroker.marketplace.domain.OnboardingProfile;
 import com.milobroker.marketplace.repository.OnboardingProfileRepository;
+import java.time.Instant;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -29,12 +30,18 @@ public class MarketplaceOnboardingService {
     requirePresent(request.intent(), "intent");
     requirePresent(request.stateCode(), "stateCode");
     requirePresent(request.cityCode(), "cityCode");
+    if (!Boolean.TRUE.equals(request.termsAccepted())) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Terms must be accepted");
+    }
     OnboardingProfile profile = profiles.findById(channelUserId)
       .orElseGet(() -> new OnboardingProfile(channelUserId));
     profile.setDisplayName(request.displayName().trim());
     profile.setIntent(request.intent().trim());
     profile.setStateCode(request.stateCode().trim());
     profile.setCityCode(request.cityCode().trim());
+    if (profile.getTermsAcceptedAt() == null) {
+      profile.setTermsAcceptedAt(Instant.now());
+    }
     profile.setCompleted(true);
     profiles.save(profile);
     return toRecord(profile);
@@ -65,5 +72,6 @@ public class MarketplaceOnboardingService {
   }
   public record ProfileRecord(String channelUserId, String displayName, String intent,
       String stateCode, String cityCode, boolean completed) {}
-  public record SaveProfileRequest(String displayName, String intent, String stateCode, String cityCode) {}
+  public record SaveProfileRequest(String displayName, String intent, String stateCode, String cityCode,
+      Boolean termsAccepted) {}
 }

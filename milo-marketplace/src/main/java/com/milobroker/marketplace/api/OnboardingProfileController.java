@@ -20,7 +20,7 @@ public class OnboardingProfileController {
   public ProfileRecord save(@RequestParam String channelUserId,
       @Valid @RequestBody SaveProfilePayload payload) {
     return onboarding.save(channelUserId, new SaveProfileRequest(
-      payload.displayName(), payload.intent(), payload.stateCode(), payload.cityCode()));
+      payload.displayName(), payload.intent(), payload.stateCode(), payload.cityCode(), payload.termsAccepted()));
   }
   @PostMapping("/welcome")
   public boolean claimWelcome(@RequestParam String channelUserId,
@@ -32,5 +32,5 @@ public class OnboardingProfileController {
     onboarding.releaseWelcome(channelUserId);
   }
   public record SaveProfilePayload(@NotBlank String displayName, @NotBlank String intent,
-      @NotBlank String stateCode, @NotBlank String cityCode) {}
+      @NotBlank String stateCode, @NotBlank String cityCode, Boolean termsAccepted) {}
 }

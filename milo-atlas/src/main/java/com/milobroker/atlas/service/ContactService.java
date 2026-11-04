@@ -22,7 +22,7 @@ public class ContactService {
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Country code must be a two-letter ISO code");
     }
     var countryRow = countries.findByShortForm(country)
-      .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Country is not configured"));
+      .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Country is not configured"));    
     return new ContactResponse(countryRow.getShortForm(), countryRow.getWhatsappNumber());
   }
 

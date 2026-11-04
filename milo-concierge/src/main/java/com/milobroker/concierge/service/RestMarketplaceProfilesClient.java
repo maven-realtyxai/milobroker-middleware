@@ -43,12 +43,13 @@ public class RestMarketplaceProfilesClient implements MarketplaceProfilesClient 
   }
   @Override
   public ProfileDto save(String channelUserId, String displayName, String intent,
-      String stateCode, String cityCode) {
+      String stateCode, String cityCode, boolean termsAccepted) {
     String payload = Json.createObjectBuilder()
       .add("displayName", displayName)
       .add("intent", intent)
       .add("stateCode", stateCode)
       .add("cityCode", cityCode)
+      .add("termsAccepted", termsAccepted)
       .build().toString();
     String json = rest.post().uri("/api/v1/onboarding/profiles?channelUserId={id}", channelUserId)
       .contentType(org.springframework.http.MediaType.APPLICATION_JSON)

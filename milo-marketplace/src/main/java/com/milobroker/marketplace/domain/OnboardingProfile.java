@@ -22,6 +22,8 @@ public class OnboardingProfile {
   private boolean completed;
   @Column(name = "welcome_sent", nullable = false)
   private boolean welcomeSent;
+  @Column(name = "terms_accepted_at")
+  private Instant termsAcceptedAt;
   @Column(name = "created_at", nullable = false)
   private Instant createdAt = Instant.now();
   @Column(name = "updated_at", nullable = false)
@@ -45,6 +47,8 @@ public class OnboardingProfile {
   public void setCompleted(boolean completed) { this.completed = completed; }
   public boolean isWelcomeSent() { return welcomeSent; }
   public void setWelcomeSent(boolean welcomeSent) { this.welcomeSent = welcomeSent; }
+  public Instant getTermsAcceptedAt() { return termsAcceptedAt; }
+  public void setTermsAcceptedAt(Instant termsAcceptedAt) { this.termsAcceptedAt = termsAcceptedAt; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getUpdatedAt() { return updatedAt; }
 }

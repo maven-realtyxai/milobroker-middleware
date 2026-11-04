@@ -26,6 +26,12 @@ services:
       MARKETPLACE_DB_URL: ${MARKETPLACE_DB_URL:-jdbc:postgresql://127.0.0.1:5432/bizdb?sslmode=disable}
       MARKETPLACE_DB_USERNAME: ${MARKETPLACE_DB_USERNAME:-bizdb_app}
       MARKETPLACE_DB_PASSWORD: ${MARKETPLACE_DB_PASSWORD:?Set MARKETPLACE_DB_PASSWORD in the untracked .env file}
+      MEDIA_BUCKET: ${MEDIA_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-ap-southeast-2}
+      MEDIA_ENDPOINT: ${MEDIA_ENDPOINT:-}
+      MEDIA_PRESIGN_MINUTES: ${MEDIA_PRESIGN_MINUTES:-15}
+      MEDIA_MAX_IMAGE_BYTES: ${MEDIA_MAX_IMAGE_BYTES:-10485760}
+      MEDIA_MAX_VIDEO_BYTES: ${MEDIA_MAX_VIDEO_BYTES:-104857600}
       LOG_PATH: /app/logs
     volumes:
       - milo-marketplace-logs:/app/logs
@@ -49,6 +55,13 @@ services:
       WHATSAPP_ONBOARDING_FLOW_ID: ${WHATSAPP_ONBOARDING_FLOW_ID:-}
       WHATSAPP_API_BASE_URL: ${WHATSAPP_API_BASE_URL:-https://graph.facebook.com/v21.0}
       FLOW_PRIVATE_KEY_PEM: ${FLOW_PRIVATE_KEY_PEM:-}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      META_MODEL_ENABLED: ${META_MODEL_ENABLED:-false}
+      META_MODEL_BASE_URL: ${META_MODEL_BASE_URL:-https://api.meta.ai/v1}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      META_MODEL_NAME: ${META_MODEL_NAME:-}
+      META_MODEL_TEMPERATURE: ${META_MODEL_TEMPERATURE:-0.3}
+      META_MODEL_MAX_TOKENS: ${META_MODEL_MAX_TOKENS:-300}
       LOG_PATH: /app/logs
     volumes:
       - milo-concierge-logs:/app/logs

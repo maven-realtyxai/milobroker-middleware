@@ -15,9 +15,13 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 /**
  * Meta WhatsApp Flows data-exchange endpoint. Must be publicly reachable over
- * HTTPS. Handles ping health checks, INIT (state options from Atlas),
+ * HTTPS. Handles ping health checks, INIT and BACK (state options from Atlas),
  * state selection (city options, clearing any prior city client-side) and
  * full-payload completion through the same validated path as the webhook.
+ * Undecryptable requests answer 421 so Meta re-downloads the public key and
+ * retries; error notifications are acknowledged; replies go back as raw
+ * base64 plaintext per the Flows contract. Optional X-Hub-Signature-256
+ * verification when an app secret is configured.
  * Speaks pure JSON-P; no Jackson anywhere in the service.
  */
 @RestController @RequestMapping("/api/v1/flows/onboarding")
@@ -31,26 +35,31 @@ public class FlowController {
     this.crypto = crypto;
     this.onboarding = onboarding;
   }
-  @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-  public ResponseEntity<String> exchange(@RequestBody String envelopeJson) {
+  @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.TEXT_PLAIN_VALUE)
+  public ResponseEntity<String> exchange(@RequestBody String envelopeJson,
+      @RequestHeader(value = "X-Hub-Signature-256", required = false) String signature) {
     if (!crypto.isConfigured()) {
       throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Flow endpoint has no private key configured");
     }
+    crypto.verifySignature(envelopeJson, signature);
     JsonObject envelope = Jsons.parseObject(envelopeJson, "Flow envelope");
     byte[] aesKey = crypto.decryptAesKey(required(envelope, "encrypted_aes_key"));
     String iv = required(envelope, "initial_vector");
     String payload = crypto.decryptBody(aesKey, iv, required(envelope, "encrypted_flow_data"));
     String response = dispatch(Jsons.parseObject(payload, "Flow payload"));
     String sealed = crypto.encryptBody(aesKey, iv, response).encryptedFlowData();
-    return ResponseEntity.ok(Json.createObjectBuilder()
-      .add("encrypted_flow_data", sealed).build().toString());
+    return ResponseEntity.ok().contentType(MediaType.TEXT_PLAIN).body(sealed);
   }
   private String dispatch(JsonObject request) {
+    if (isErrorNotification(request)) {
+      return Json.createObjectBuilder()
+        .add("data", Json.createObjectBuilder().add("acknowledged", true)).build().toString();
+    }
     String action = Jsons.string(request, "action");
     if ("ping".equals(action)) {
       return status();
     }
-    if ("INIT".equals(action)) {
+    if ("INIT".equals(action) || "BACK".equals(action)) {
       return init(request);
     }
     if ("data_exchange".equals(action)) {
@@ -58,6 +67,10 @@ public class FlowController {
     }
     throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
       action == null ? "Flow action is missing" : "Unknown Flow action: " + action);
+  }
+  /** Meta re-sends a rejected payload as {data:{error, error_message}}; ack it so the client stops retrying. */
+  private boolean isErrorNotification(JsonObject request) {
+    return Jsons.string(Jsons.object(request, "data"), "error") != null;
   }
   private String status() {
     return Json.createObjectBuilder().add("version", VERSION)
@@ -80,7 +93,8 @@ public class FlowController {
     if (isCompletePayload(data)) {
       CompletionRequest completion = new CompletionRequest(
         Jsons.string(data, "name"), roleValue(data),
-        Jsons.string(data, "state"), Jsons.string(data, "city"));
+        Jsons.string(data, "state"), Jsons.string(data, "city"),
+        jakarta.json.JsonValue.TRUE.equals(data.get("termsAccepted")));
       onboarding.complete(userId, completion);
       JsonObjectBuilder done = Json.createObjectBuilder().add("success", true)
         .add("message", "Onboarding complete. Welcome, " + completion.displayName().trim() + "!");
