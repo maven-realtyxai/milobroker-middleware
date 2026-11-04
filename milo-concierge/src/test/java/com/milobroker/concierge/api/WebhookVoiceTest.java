@@ -92,7 +92,7 @@ class WebhookVoiceTest {
   private void stubMediaOk() {
     mediaServer.expect(requestTo("https://graph.facebook.com/v21.0/a1"))
       .andRespond(withSuccess(
-        "{\"download_url\":\"https://graph.facebook.com/v21.0/f1\",\"mime_type\":\"audio/ogg\"}",
+        "{\"url\":\"https://graph.facebook.com/v21.0/f1\",\"mime_type\":\"audio/ogg\"}",
         MediaType.APPLICATION_JSON));
     mediaServer.expect(requestTo("https://graph.facebook.com/v21.0/f1"))
       .andRespond(withSuccess("OGGDATA", MediaType.APPLICATION_OCTET_STREAM));

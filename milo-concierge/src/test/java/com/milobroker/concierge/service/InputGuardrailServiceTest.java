@@ -31,6 +31,11 @@ class InputGuardrailServiceTest {
     assertEquals(Decision.ALLOW, v.decision());
     assertTrue(v.allowed());
   }
+  @Test
+  void postRequestAndShortLocationAreAllowed() {
+    assertTrue(guardrail.evaluateText("I need to post a property").allowed());
+    assertTrue(guardrail.evaluateText("Devanahalli, blr").allowed());
+  }
 
   @Test
   void agentIntentIsAllowed() {

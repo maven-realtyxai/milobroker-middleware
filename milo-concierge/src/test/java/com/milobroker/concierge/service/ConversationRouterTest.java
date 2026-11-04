@@ -44,9 +44,32 @@ class ConversationRouterTest {
   @Test
   void blockedMessageGetsClarityNudge() {
     when(onboarding.profile("911234567890")).thenReturn(completed());
+    when(model.isConfigured()).thenReturn(true);
+    when(model.classifyProperty(any(), any())).thenReturn(ModelClient.Relevance.OTHER);
     router.reply("911234567890", "Ravi", "help with my math homework", "text");
     verify(model, never()).chat(any());
     verify(whatsapp).sendText(eq("911234567890"), contains("Ravi"));
+  }
+
+  @Test
+  void contextualLocationIsAcceptedByModelRelevance() {
+    when(onboarding.profile("911234567890")).thenReturn(completed());
+    when(model.isConfigured()).thenReturn(true);
+    when(model.classifyProperty(eq("Devanahalli, blr"), any())).thenReturn(ModelClient.Relevance.PROPERTY);
+    when(model.chat(any())).thenReturn("What kind of place do you need?");
+    router.reply("911234567890", "Ravi", "Devanahalli, blr", "text");
+    verify(model).chat(contains("Devanahalli, blr"));
+    verify(whatsapp).sendText(eq("911234567890"), contains("What kind"));
+  }
+
+  @Test
+  void relevanceFailureDoesNotBlockPropertyFollowup() {
+    when(onboarding.profile("911234567890")).thenReturn(completed());
+    when(model.isConfigured()).thenReturn(true);
+    when(model.classifyProperty(any(), any())).thenThrow(new RuntimeException("unavailable"));
+    when(model.chat(any())).thenReturn("What kind of place do you need?");
+    router.reply("911234567890", "Ravi", "Devanahalli, blr", "text");
+    verify(model).chat(contains("Devanahalli, blr"));
   }
 
   @Test

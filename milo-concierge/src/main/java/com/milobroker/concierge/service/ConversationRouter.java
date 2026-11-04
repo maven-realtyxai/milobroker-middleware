@@ -2,8 +2,6 @@ package com.milobroker.concierge.service;
 
 import com.milobroker.concierge.dto.OnboardingDtos.ProfileDto;
 import com.milobroker.concierge.json.Jsons;
-import com.milobroker.concierge.service.InputGuardrailService.Decision;
-import com.milobroker.concierge.service.InputGuardrailService.Verdict;
 import jakarta.json.Json;
 import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
@@ -22,7 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 /**
- * Free-text replies: input guardrail first, then voice, then incomplete users
+ * Free-text replies: property keyword or model relevance, then incomplete users
  * go to the plain-text onboarding machine (never the model). Completed users
  * take the POST branch (new property drafts), the SEARCH branch (marketplace
  * search as a plain-text numbered list), or plain chat through the model and
@@ -35,7 +33,9 @@ public class ConversationRouter {
   private static final Pattern POST_INTENT =
     Pattern.compile("(?i)\\b(list|listing|sell|rent\\s+out|post)\\b");
   private static final Pattern LOCALITY_AFTER_IN =
-    Pattern.compile("(?i)\\bin\\s+([a-z][a-z .'\\-]{1,30})");
+    Pattern.compile("(?i)\\bin\\s+([a-z][a-z .'\\-]{1,30}?)(?=\\s+(?:under|below|with|for|budget|near)\\b|[,!?]|$)");
+  private static final Pattern LOCALITY_AND_CITY =
+    Pattern.compile("(?i)^\\s*([a-z][a-z .'-]{1,40})\\s*,\\s*([a-z][a-z .'-]{1,30})\\s*$");
   private static final Pattern BEDROOMS =
     Pattern.compile("(?i)(\\d+)\\s*(?:bhk|bed(?:room)?s?)");
   private static final Pattern BUDGET =
@@ -46,15 +46,23 @@ public class ConversationRouter {
     "budget", "price", "flat", "apartment", "house", "villa", "plot",
     "room", "furnish", "locality", "location", "move", "shift",
     "possession", "visit", "site");
+  private static final Pattern PROPERTY_TERMS = Pattern.compile(
+    "(?iu)\\b(?:property|properties|rent|rental|renting|buy|buyer|purchase|sell|seller|sale|post|listing|list|"
+      + "flat|apartment|house|home|villa|plot|pg|room|bedrooms?|bhk|budget|locality|tenant|landlord|owner|"
+      + "agent|broker|lease|deposit|onboard|register|signup|agreement)\\b|\\b\\d+\\s*bhk\\b");
+  private static final Set<String> GREETINGS = Set.of("hi", "hello", "hey", "namaste", "namaskar");
 
   private final OnboardingService onboarding;
   private final WhatsAppClient whatsapp;
-  private final InputGuardrailService guardrail;
   private final ModelClient model;
   private final ChatOnboardingService chat;
   private final PostPropertyFlowService postFlow;
   private final OutputGuardrailService outputGuardrail;
   private final RestClient search;
+  private ConversationMemory memory;
+
+  @Autowired
+  public void setConversationMemory(ConversationMemory memory) { this.memory = memory; }
 
   /** Legacy wiring: onboarding gate only, no post/search/output stages. */
   public ConversationRouter(OnboardingService onboarding, WhatsAppClient whatsapp,
@@ -71,7 +79,6 @@ public class ConversationRouter {
       String marketplaceBaseUrl) {
     this.onboarding = onboarding;
     this.whatsapp = whatsapp;
-    this.guardrail = guardrail;
     this.model = model;
     this.chat = chat;
     this.postFlow = postFlow;
@@ -81,7 +88,6 @@ public class ConversationRouter {
   }
 
   public void reply(String from, String senderName, String text, String messageType) {
-    Verdict verdict = guardrail.evaluate(messageType, text);
     String body = text == null ? "" : text;
     ProfileDto profile = onboarding.profile(from);
     String name = senderName != null && !senderName.isBlank() ? senderName : profile.displayName();
@@ -90,11 +96,7 @@ public class ConversationRouter {
       postFlow.handle(from, senderName, body, messageType);
       return;
     }
-    if (!verdict.allowed()) {
-      whatsapp.sendText(from, "Hi " + greet + "! " + verdict.clarity());
-      return;
-    }
-    if (verdict.decision() == Decision.VOICE) {
+    if (InputGuardrailService.isVoiceType(messageType)) {
       whatsapp.sendText(from, "Hi " + greet + "! I can't listen to voice notes yet - "
         + "please type your message and I'll reply.");
       return;
@@ -105,29 +107,74 @@ public class ConversationRouter {
       }
       return;
     }
+    if (!propertyRelevant(from, body)) {
+      whatsapp.sendText(from, "Hi " + greet + "! I can help with properties, rentals, purchases and listings. "
+        + "Please tell me what you are looking for.");
+      return;
+    }
     if (postFlow != null && (postFlow.isInProgress(from) || isPostIntent(body))) {
       postFlow.handle(from, senderName, body, messageType);
       return;
+    }
+    rememberLocation(from, profile, body);
+    if (memory != null && search != null) {
+      try {
+        String locality = localityOf(body);
+        if (locality == null) locality = memory.locality(from);
+        String pending = memory.pendingSearch(from);
+        Matcher locationReply = LOCALITY_AND_CITY.matcher(body);
+        if (locality != null && pending != null && locationReply.matches()
+            && profile.cityCode() != null && locationReply.group(2).trim().equalsIgnoreCase(profile.cityCode())) {
+          if (searchAndReply(from, greet, profile, pending)) {
+            memory.savePendingSearch(from, null);
+            return;
+          }
+        }
+        if (locality == null && looksLikeSearch(body)) {
+          memory.savePendingSearch(from, body);
+          whatsapp.sendText(from, "Which locality and city? Reply like: Devanahalli, BLR.");
+          return;
+        }
+      } catch (Exception ex) {
+        log.warn("Could not update search context", ex);
+      }
     }
     if (search != null && searchAndReply(from, greet, profile, body)) {
       return;
     }
     if (!model.isConfigured()) {
-      whatsapp.sendText(from, fallback(greet));
+      sendChatFallback(from, greet, body);
       return;
     }
     try {
-      String raw = model.chat(context(profile, greet, body));
+      String history = history(from);
+      String raw = model.chat(context(profile, greet, body, history));
       String safe = outputGuardrail == null ? raw : outputGuardrail.sanitize(raw, greet);
-      whatsapp.sendText(from, safe != null ? safe : fallback(greet));
+      String reply = safe != null ? safe : fallback(greet, body);
+      whatsapp.sendText(from, reply);
+      remember(from, body, reply);
     } catch (Exception ex) {
       log.warn("Model reply failed for {}", from, ex);
-      whatsapp.sendText(from, fallback(greet));
+      sendChatFallback(from, greet, body);
     }
   }
 
   static boolean isPostIntent(String text) {
     return text != null && POST_INTENT.matcher(text).find();
+  }
+
+  private boolean propertyRelevant(String from, String body) {
+    String trimmed = body.trim();
+    if (trimmed.isEmpty() || GREETINGS.contains(trimmed.toLowerCase(Locale.ROOT))
+        || PROPERTY_TERMS.matcher(trimmed).find()) return true;
+    if (!model.isConfigured()) return true;
+    try {
+      // UNKNOWN is allowed through so a temporary model failure cannot reject a real enquiry.
+      return model.classifyProperty(trimmed, history(from)) != ModelClient.Relevance.OTHER;
+    } catch (Exception ex) {
+      log.warn("Property relevance check unavailable; continuing with message");
+      return true;
+    }
   }
 
   /**
@@ -137,22 +184,17 @@ public class ConversationRouter {
    */
   private boolean searchAndReply(String from, String greet, ProfileDto profile, String body) {
     try {
-      String norm = body.toLowerCase(Locale.ROOT);
-      boolean looksLikeSearch = false;
-      for (String term : SEARCH_TERMS) {
-        if (norm.contains(term)) {
-          looksLikeSearch = true;
-          break;
-        }
-      }
-      if (!looksLikeSearch || profile.cityCode() == null || profile.cityCode().isBlank()) {
+      if (!looksLikeSearch(body) || profile.cityCode() == null || profile.cityCode().isBlank()) {
         return false;
       }
       String locality = localityOf(body);
+      if (locality == null && memory != null) locality = memory.locality(from);
       if (locality == null) {
         return false;
       }
-      String listingType = "BUY".equals(profile.intent()) ? "SALE" : "RENT";
+      String listingType = Pattern.compile("(?i)\\b(buy|purchase|sale)\\b").matcher(body).find() ? "SALE"
+        : Pattern.compile("(?i)\\b(rent|rental)\\b").matcher(body).find() ? "RENT"
+        : "BUY".equals(profile.intent()) ? "SALE" : "RENT";
       Integer bedrooms = bedroomsOf(body);
       Long budget = budgetOf(body);
       JsonObject request = Json.createObjectBuilder()
@@ -176,8 +218,8 @@ public class ConversationRouter {
         String place = locality.isEmpty() ? "that area"
           : locality.substring(0, 1).toUpperCase(Locale.ROOT)
             + locality.substring(1).toLowerCase(Locale.ROOT).replace('_', ' ');
-        whatsapp.sendText(from, "Hi " + greet + "! There are currently no properties listed in "
-          + place + ". Reply REFINE with a different locality or budget and I'll look again.");
+        whatsapp.sendText(from, "Hi " + greet + "! I couldn't find a match for those filters in "
+          + place + ". Try another locality or change your requirements.");
         return true;
       }
       StringBuilder out = new StringBuilder("Hi " + greet
@@ -203,6 +245,11 @@ public class ConversationRouter {
       log.warn("Marketplace search fell through to model for {}", from, ex);
       return false;
     }
+  }
+
+  private static boolean looksLikeSearch(String body) {
+    String norm = body.toLowerCase(Locale.ROOT);
+    return SEARCH_TERMS.stream().anyMatch(norm::contains);
   }
 
   private static String localityOf(String body) {
@@ -253,14 +300,45 @@ public class ConversationRouter {
     return out;
   }
 
-  private String context(ProfileDto profile, String greet, String text) {
+  private String context(ProfileDto profile, String greet, String text, String history) {
     return "Profile: name=" + greet + ", intent=" + profile.intent()
       + ", state=" + profile.stateCode() + ", city=" + profile.cityCode()
-      + ", onboarding complete. Message: " + text;
+      + ", onboarding complete. Recent conversation:\n" + history + "Current message: " + text;
   }
 
-  private String fallback(String greet) {
-    return "Hi " + greet + "! Thanks for your message - I'm catching up. Meanwhile, tell me "
-      + "your city, budget, and bedroom needs, or open the onboarding form to complete your profile.";
+  private String fallback(String greet, String text) {
+    if (text != null && text.matches("(?i)^[a-z][a-z .'-]+\\s*,\\s*[a-z][a-z .'-]+$")) {
+      return "Thanks! Are you looking to rent or buy there? Please include your budget and bedrooms.";
+    }
+    return "Hi " + greet + "! I'm catching up. To search, try '2 BHK rent in Koramangala'. "
+      + "To advertise, say 'post a property'.";
+  }
+  private String history(String from) {
+    try { return memory == null ? "" : memory.history(from); }
+    catch (Exception ex) { log.warn("Could not load conversation history", ex); return ""; }
+  }
+  private void remember(String from, String body, String reply) {
+    try { if (memory != null) memory.record(from, body, reply); }
+    catch (Exception ex) { log.warn("Could not save conversation history", ex); }
+  }
+  private void sendChatFallback(String from, String greet, String body) {
+    String reply = fallback(greet, body);
+    whatsapp.sendText(from, reply);
+    remember(from, body, reply);
+  }
+  private void rememberLocation(String from, ProfileDto profile, String body) {
+    if (memory == null || body == null) return;
+    String locality = localityOf(body);
+    if (locality == null) {
+      Matcher pair = LOCALITY_AND_CITY.matcher(body);
+      if (pair.matches() && profile.cityCode() != null
+          && pair.group(2).trim().equalsIgnoreCase(profile.cityCode())) {
+        locality = pair.group(1).trim().toUpperCase(Locale.ROOT).replaceAll("\\s+", "_");
+      }
+    }
+    if (locality != null) {
+      try { memory.rememberLocality(from, locality); }
+      catch (Exception ex) { log.warn("Could not save search locality", ex); }
+    }
   }
 }

@@ -6,6 +6,7 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
+import org.hibernate.annotations.ColumnTransformer;
 import java.time.Instant;
 import java.util.UUID;
 /** One conversation thread (V1 conversation_sessions). Context stays in the database default. */
@@ -19,6 +20,7 @@ public class ConversationSession {
   private String channelUserId;
   @Column(name = "state", nullable = false, length = 64)
   private String state;
+  @ColumnTransformer(write = "?::jsonb")
   @Column(name = "context", nullable = false, columnDefinition = "jsonb")
   private String context = "{}";
   @Version @Column(name = "version", nullable = false)

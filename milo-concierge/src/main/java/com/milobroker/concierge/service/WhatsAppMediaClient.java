@@ -52,7 +52,7 @@ public class WhatsAppMediaClient {
           "WhatsApp media lookup failed", ex);
     }
     JsonObject root = Jsons.parseObject(info == null ? "{}" : info, "Media info");
-    String downloadUrl = Jsons.string(root, "download_url");
+    String downloadUrl = Jsons.string(root, "url");
     if (downloadUrl == null || downloadUrl.isBlank()) {
       throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
           "WhatsApp media has no download URL");

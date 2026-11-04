@@ -31,7 +31,7 @@ class WhatsAppMediaClientTest {
     server.expect(requestTo("https://graph.facebook.com/v21.0/a1"))
       .andExpect(header("Authorization", "Bearer tok"))
       .andRespond(withSuccess(
-        "{\"download_url\":\"https://graph.facebook.com/v21.0/f1\",\"mime_type\":\"audio/ogg\"}",
+        "{\"url\":\"https://graph.facebook.com/v21.0/f1\",\"mime_type\":\"audio/ogg\"}",
         MediaType.APPLICATION_JSON));
     server.expect(requestTo("https://graph.facebook.com/v21.0/f1"))
       .andRespond(withSuccess("OGGDATA", MediaType.APPLICATION_OCTET_STREAM));
@@ -47,7 +47,7 @@ class WhatsAppMediaClientTest {
   void oversizedAudioIsRejected() {
     server.expect(requestTo("https://graph.facebook.com/v21.0/a1"))
       .andRespond(withSuccess(
-        "{\"download_url\":\"https://graph.facebook.com/v21.0/f1\",\"mime_type\":\"audio/ogg\"}",
+        "{\"url\":\"https://graph.facebook.com/v21.0/f1\",\"mime_type\":\"audio/ogg\"}",
         MediaType.APPLICATION_JSON));
     server.expect(requestTo("https://graph.facebook.com/v21.0/f1"))
       .andRespond(withSuccess("TOOBIG", MediaType.APPLICATION_OCTET_STREAM));
