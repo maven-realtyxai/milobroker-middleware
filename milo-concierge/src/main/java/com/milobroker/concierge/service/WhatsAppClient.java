@@ -106,6 +106,37 @@ public class WhatsAppClient {
       .retrieve().toBodilessEntity();
     return true;
   }
+  /** Sends a media attachment using a fresh signed download URL, never logged. */
+  public boolean sendMedia(String to, String type, String url, String caption) {
+    if (!"image".equals(type) && !"video".equals(type)) {
+      throw new IllegalArgumentException("Only image and video messages are supported");
+    }
+    java.net.URI link = java.net.URI.create(url);
+    if (!"https".equalsIgnoreCase(link.getScheme()) || link.getHost() == null) {
+      throw new IllegalArgumentException("Media requires an HTTPS URL");
+    }
+    if (!isConfigured()) {
+      log.info("WhatsApp media send skipped (no API credentials); type={}", type);
+      return false;
+    }
+    String text = caption == null ? "" : caption;
+    if (text.codePointCount(0, text.length()) > 1024) {
+      text = text.substring(0, text.offsetByCodePoints(0, 1024));
+    }
+    String payload = Json.createObjectBuilder()
+      .add("messaging_product", "whatsapp")
+      .add("recipient_type", "individual")
+      .add("to", to)
+      .add("type", type)
+      .add(type, Json.createObjectBuilder().add("link", url).add("caption", text))
+      .build().toString();
+    rest.post().uri("/{id}/messages", phoneNumberId)
+      .headers(h -> h.setBearerAuth(apiToken))
+      .contentType(MediaType.APPLICATION_JSON).body(payload)
+      .retrieve().toBodilessEntity();
+    return true;
+  }
+
   /** Sends a plain text message. Returns false when unconfigured (logged only). */
   public boolean sendText(String to, String body) {
     if (!isConfigured()) {

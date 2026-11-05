@@ -38,6 +38,12 @@ public class WhatsAppMediaClient {
   }
 
   public AudioBytes downloadAudio(String mediaId) {
+    return download(mediaId, maxBytes);
+  }
+
+  /** Bounded download shared by voice notes and listing attachments. */
+  public AudioBytes download(String mediaId, long limit) {
+    if (limit <= 0 || limit >= Integer.MAX_VALUE) throw new IllegalArgumentException("Invalid media limit");
     if (!isConfigured()) {
       throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
           "WhatsApp media download is not configured");
@@ -62,7 +68,12 @@ public class WhatsAppMediaClient {
     try {
       data = rest.get().uri(java.net.URI.create(downloadUrl))
           .headers(h -> h.setBearerAuth(apiToken))
-          .retrieve().body(byte[].class);
+          .exchange((request, response) -> {
+            if (!response.getStatusCode().is2xxSuccessful()) {
+              throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "WhatsApp media download failed");
+            }
+            return response.getBody().readNBytes((int) limit + 1);
+          });
     } catch (Exception ex) {
       throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
           "WhatsApp media download failed", ex);
@@ -71,9 +82,9 @@ public class WhatsAppMediaClient {
       throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
           "WhatsApp media was empty");
     }
-    if (data.length > maxBytes) {
+    if (data.length > limit) {
       throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,
-          "Voice note is too large, please send a shorter one");
+          "Media is too large, please send a smaller file");
     }
     if (mime == null || mime.isBlank()) {
       mime = "application/octet-stream";

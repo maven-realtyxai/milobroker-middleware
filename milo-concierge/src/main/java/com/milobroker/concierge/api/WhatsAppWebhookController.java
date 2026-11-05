@@ -153,7 +153,11 @@ public class WhatsAppWebhookController {
         }
         if (handleDeletion(from, messageType, body)) continue;
         if (onboarding.profile(from).completed()) {
-          router.reply(from, senderName, body, messageType);
+          if ("image".equals(messageType) || "video".equals(messageType)) {
+            router.receiveMedia(from, Jsons.string(Jsons.object(message, messageType), "id"), messageType);
+          } else {
+            router.reply(from, senderName, body, messageType);
+          }
         } else {
           chatOrWelcome(from, senderName, messageType, body);
         }

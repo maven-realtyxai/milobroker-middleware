@@ -27,6 +27,25 @@ public class ConversationMemory {
       .map(session -> Jsons.string(root(session), "searchLocality")).orElse(null);
   }
 
+  public JsonObject searchFilters(String from) {
+    return sessions.findFirstByChannelAndChannelUserIdOrderByUpdatedAtDesc("whatsapp", from)
+      .map(session -> Jsons.object(root(session), "searchFilters")).orElse(null);
+  }
+
+  public void saveSearchFilters(String from, JsonObject filters) {
+    ConversationSession session = sessions.findFirstByChannelAndChannelUserIdOrderByUpdatedAtDesc("whatsapp", from)
+      .orElseGet(() -> {
+        var fresh = new ConversationSession();
+        fresh.setChannel("whatsapp"); fresh.setChannelUserId(from); fresh.setState("OPEN");
+        return fresh;
+      });
+    var updated = Json.createObjectBuilder(root(session));
+    if (filters == null) updated.remove("searchFilters");
+    else updated.add("searchFilters", filters);
+    session.setContext(updated.build().toString());
+    sessions.save(session);
+  }
+
   public String pendingSearch(String from) {
     return sessions.findFirstByChannelAndChannelUserIdOrderByUpdatedAtDesc("whatsapp", from)
       .map(session -> Jsons.string(root(session), "pendingSearch")).orElse(null);

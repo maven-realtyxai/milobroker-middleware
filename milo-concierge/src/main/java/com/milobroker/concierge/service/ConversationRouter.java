@@ -33,9 +33,9 @@ public class ConversationRouter {
   private static final Pattern POST_INTENT =
     Pattern.compile("(?i)\\b(list|listing|sell|rent\\s+out|post)\\b");
   private static final Pattern LOCALITY_AFTER_IN =
-    Pattern.compile("(?i)\\bin\\s+([a-z][a-z .'\\-]{1,30}?)(?=\\s+(?:under|below|with|for|budget|near)\\b|[,!?]|$)");
+    Pattern.compile("(?iu)\\bin\\s+([\\p{L}][\\p{L}\\p{M}0-9 .'\\-]{0,60}?)(?=\\s+(?:under|below|with|for|budget|near)\\b|[,!?]|$)");
   private static final Pattern LOCALITY_AND_CITY =
-    Pattern.compile("(?i)^\\s*([a-z][a-z .'-]{1,40})\\s*,\\s*([a-z][a-z .'-]{1,30})\\s*$");
+    Pattern.compile("(?iu)^\\s*([\\p{L}][\\p{L}\\p{M}0-9 .'-]{0,60})\\s*,\\s*([a-z][a-z .'-]{1,30})\\s*$");
   private static final Pattern BEDROOMS =
     Pattern.compile("(?i)(\\d+)\\s*(?:bhk|bed(?:room)?s?)");
   private static final Pattern BUDGET =
@@ -107,12 +107,31 @@ public class ConversationRouter {
       }
       return;
     }
+    // Resolve short replies against the last successful search before asking the model
+    // to classify a place name in isolation.
+    if (search != null && memory != null && !isPostIntent(body)) {
+      try {
+        String pending = memory.pendingSearch(from);
+        JsonObject previous = memory.searchFilters(from);
+        if ((pending != null || previous != null) && isLocationReply(body)) {
+          Matcher pair = LOCALITY_AND_CITY.matcher(body);
+          String place = pair.matches() ? pair.group(1).trim() : body.trim();
+          String city = pair.matches() ? pair.group(2).trim().toUpperCase(Locale.ROOT) : null;
+          String query = pending != null ? pending : "search";
+          if (searchAndReply(from, greet, profile, query + " in " + place, body, city)) return;
+        }
+      } catch (Exception ex) {
+        log.warn("Could not resolve previous search context", ex);
+      }
+    }
     if (!propertyRelevant(from, body)) {
+      clearSearch(from);
       whatsapp.sendText(from, "Hi " + greet + "! I can help with properties, rentals, purchases and listings. "
         + "Please tell me what you are looking for.");
       return;
     }
     if (postFlow != null && (postFlow.isInProgress(from) || isPostIntent(body))) {
+      clearSearch(from);
       postFlow.handle(from, senderName, body, messageType);
       return;
     }
@@ -121,18 +140,11 @@ public class ConversationRouter {
       try {
         String locality = localityOf(body);
         if (locality == null) locality = memory.locality(from);
-        String pending = memory.pendingSearch(from);
-        Matcher locationReply = LOCALITY_AND_CITY.matcher(body);
-        if (locality != null && pending != null && locationReply.matches()
-            && profile.cityCode() != null && locationReply.group(2).trim().equalsIgnoreCase(profile.cityCode())) {
-          if (searchAndReply(from, greet, profile, pending)) {
-            memory.savePendingSearch(from, null);
-            return;
-          }
-        }
         if (locality == null && looksLikeSearch(body)) {
           memory.savePendingSearch(from, body);
-          whatsapp.sendText(from, "Which locality and city? Reply like: Devanahalli, BLR.");
+          String prompt = "Which locality and city? Reply like: Devanahalli, BLR.";
+          whatsapp.sendText(from, prompt);
+          remember(from, body, prompt);
           return;
         }
       } catch (Exception ex) {
@@ -142,6 +154,7 @@ public class ConversationRouter {
     if (search != null && searchAndReply(from, greet, profile, body)) {
       return;
     }
+    clearSearch(from);
     if (!model.isConfigured()) {
       sendChatFallback(from, greet, body);
       return;
@@ -157,6 +170,10 @@ public class ConversationRouter {
       log.warn("Model reply failed for {}", from, ex);
       sendChatFallback(from, greet, body);
     }
+  }
+
+  public void receiveMedia(String from, String mediaId, String type) {
+    if (postFlow != null) postFlow.handleMedia(from, mediaId, type);
   }
 
   static boolean isPostIntent(String text) {
@@ -178,11 +195,15 @@ public class ConversationRouter {
   }
 
   /**
-   * Best-effort marketplace search. Returns true when a numbered list was
-   * sent; false (unknown locality, empty results, any failure) lets the
-   * caller fall through to the model.
+   * Returns true after sending search results or a no-match response.
+   * Missing location or downstream failure falls through to the model.
    */
   private boolean searchAndReply(String from, String greet, ProfileDto profile, String body) {
+    return searchAndReply(from, greet, profile, body, body, null);
+  }
+
+  private boolean searchAndReply(String from, String greet, ProfileDto profile, String body,
+      String originalMessage, String cityOverride) {
     try {
       if (!looksLikeSearch(body) || profile.cityCode() == null || profile.cityCode().isBlank()) {
         return false;
@@ -192,13 +213,17 @@ public class ConversationRouter {
       if (locality == null) {
         return false;
       }
+      JsonObject previous = memory == null ? null : memory.searchFilters(from);
       String listingType = Pattern.compile("(?i)\\b(buy|purchase|sale)\\b").matcher(body).find() ? "SALE"
         : Pattern.compile("(?i)\\b(rent|rental)\\b").matcher(body).find() ? "RENT"
+        : previous != null ? previous.getString("listingType", "RENT")
         : "BUY".equals(profile.intent()) ? "SALE" : "RENT";
       Integer bedrooms = bedroomsOf(body);
       Long budget = budgetOf(body);
-      JsonObject request = Json.createObjectBuilder()
-        .add("cityCode", profile.cityCode().toUpperCase(Locale.ROOT))
+      String city = cityOverride != null ? cityOverride
+        : previous != null ? previous.getString("cityCode", profile.cityCode()) : profile.cityCode();
+      JsonObject request = Json.createObjectBuilder(previous == null ? Json.createObjectBuilder().build() : previous)
+        .add("cityCode", city.toUpperCase(Locale.ROOT))
         .add("localityCode", locality)
         .add("listingType", listingType)
         .build();
@@ -209,42 +234,114 @@ public class ConversationRouter {
       if (budget != null) {
         enriched.add("maximumBudgetInr", budget);
       }
+      JsonObject filters = enriched.build();
       String json = search.post().uri("/api/v1/search")
         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-        .body(enriched.build().toString())
+        .body(filters.toString())
         .retrieve().body(String.class);
       List<JsonObject> results = resultsOf(json);
+      if (memory != null) {
+        memory.saveSearchFilters(from, filters);
+        memory.rememberLocality(from, locality);
+        memory.savePendingSearch(from, null);
+      }
       if (results.isEmpty()) {
         String place = locality.isEmpty() ? "that area"
           : locality.substring(0, 1).toUpperCase(Locale.ROOT)
             + locality.substring(1).toLowerCase(Locale.ROOT).replace('_', ' ');
-        whatsapp.sendText(from, "Hi " + greet + "! I couldn't find a match for those filters in "
-          + place + ". Try another locality or change your requirements.");
+        String reply = "Hi " + greet + "! I couldn't find a match for those filters in "
+          + place + " (" + city + "). Try another locality or change your requirements. "
+          + "To change city, reply 'locality, city code'.";
+        whatsapp.sendText(from, reply);
+        remember(from, originalMessage, reply);
         return true;
       }
       StringBuilder out = new StringBuilder("Hi " + greet
         + "! Here are some options:");
+      List<String> captions = new ArrayList<>();
       int shown = 0;
       for (JsonObject row : results) {
         if (shown >= 5) {
           break;
         }
         shown++;
-        out.append('\n').append(shown).append(". ")
+        StringBuilder caption = new StringBuilder().append(shown).append(". ")
           .append(Jsons.string(row, "title"));
         String price = Jsons.string(row, "priceInr");
         String loc = Jsons.string(row, "localityCode");
-        out.append(" - Rs.").append(price == null ? "?" : price);
+        caption.append(" - Rs.").append(price == null ? "?" : price);
         if (loc != null) {
-          out.append(" (").append(loc).append(')');
+          caption.append(" (").append(loc).append(')');
         }
+        out.append('\n').append(caption);
+        captions.add(caption.toString());
       }
       whatsapp.sendText(from, out.toString());
+      remember(from, originalMessage, out.toString());
+      // The text summary is also the fallback if any media is missing or rejected.
+      for (int i = 0; i < shown; i++) {
+        sendSearchMedia(from, Jsons.string(results.get(i), "listingId"), captions.get(i));
+      }
       return true;
     } catch (Exception ex) {
       log.warn("Marketplace search fell through to model for {}", from, ex);
       return false;
     }
+  }
+
+  /** Prefer one cover image; use a video when no supported image is available. */
+  private void sendSearchMedia(String from, String listingId, String caption) {
+    if (listingId == null || listingId.isBlank()) return;
+    try {
+      String json = search.get().uri("/api/v1/listings/{id}/media", listingId)
+        .retrieve().body(String.class);
+      JsonArray media;
+      try (var reader = Json.createReader(new java.io.StringReader(json))) {
+        media = reader.readArray();
+      }
+      for (String type : List.of("IMAGE", "VIDEO")) {
+        for (JsonValue value : media) {
+          if (!(value instanceof JsonObject file) || !sendableMedia(file, type)) continue;
+          whatsapp.sendMedia(from, type.toLowerCase(Locale.ROOT), file.getString("url"),
+            caption + "\nRef: " + listingId);
+          return;
+        }
+      }
+    } catch (Exception ex) {
+      // Do not log signed URLs or fall through to a model after sending real results.
+      log.warn("Search cover media unavailable for listing {}; using text summary ({})",
+        listingId, ex.getClass().getSimpleName());
+    }
+  }
+
+  private static boolean sendableMedia(JsonObject file, String type) {
+    if (!"READY".equals(Jsons.string(file, "uploadStatus"))
+        || !type.equals(Jsons.string(file, "mediaType"))) return false;
+    String url = Jsons.string(file, "url");
+    String mime = Jsons.string(file, "contentType");
+    if (url == null || !url.startsWith("https://") || mime == null) return false;
+    Set<String> supported = "IMAGE".equals(type) ? Set.of("image/jpeg", "image/png")
+      : Set.of("video/mp4", "video/3gpp");
+    if (!supported.contains(mime.toLowerCase(Locale.ROOT))) return false;
+    try {
+      long size = Long.parseLong(Jsons.string(file, "sizeBytes"));
+      return size > 0 && size <= ("IMAGE".equals(type) ? 5 * 1024 * 1024L : 16 * 1024 * 1024L);
+    } catch (NumberFormatException ex) { return false; }
+  }
+
+  private static boolean isLocationReply(String body) {
+    String text = body.trim().toLowerCase(Locale.ROOT);
+    if (GREETINGS.contains(text) || Set.of("thanks", "thank you", "ok", "okay", "yes", "no", "done", "skip", "help", "cancel", "stop").contains(text)) return false;
+    if (PROPERTY_TERMS.matcher(text).find()) return false;
+    if (text.matches(".*\\b(?:need|want|what|why|how|please|show|tell|help|weather|thanks|thank|search|rent|buy|sale)\\b.*")) return false;
+    return LOCALITY_AND_CITY.matcher(text).matches()
+      || text.matches("[\\p{L}\\p{M}][\\p{L}\\p{M}0-9.'-]*(?:\\s+[\\p{L}\\p{M}0-9.'-]+){0,3}");
+  }
+
+  private void clearSearch(String from) {
+    if (memory == null) return;
+    try { memory.saveSearchFilters(from, null); memory.savePendingSearch(from, null); }
+    catch (Exception ex) { log.warn("Could not clear search context", ex); }
   }
 
   private static boolean looksLikeSearch(String body) {

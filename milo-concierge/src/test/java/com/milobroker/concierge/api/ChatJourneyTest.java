@@ -135,6 +135,8 @@ class ChatJourneyTest {
     send(from, "Bright flat near metro");
     verify(listings).createListing(eq(from), eq("Sunny 2BHK"), eq("Bright flat near metro"),
       eq("RENT"), eq("APARTMENT"), eq("KA"), eq("BLR"), eq(2), eq(25000L));
+    assertTrue(allTexts(from).get(allTexts(from).size() - 1).contains("photos/videos"));
+    send(from, "SKIP");
     assertTrue(allTexts(from).get(allTexts(from).size() - 1).contains("Posted! ref abcdef"));
 
     send(from, "2bhk under 30000 in BLR");

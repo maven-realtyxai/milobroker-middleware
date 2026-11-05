@@ -28,6 +28,7 @@ class PostPropertyFlowServiceTest {
   @Mock ConversationSessionRepository sessions;
   @Mock WhatsAppClient whatsapp;
   @Mock MarketplaceListingsClient listings;
+  @Mock ListingMediaTransfer media;
   private final Map<String, ConversationSession> store = new ConcurrentHashMap<>();
   private PostPropertyFlowService flow;
 
@@ -44,6 +45,7 @@ class PostPropertyFlowServiceTest {
     lenient().when(listings.activeCount(any())).thenReturn(0);
     flow = new PostPropertyFlowService(sessions, whatsapp,
       new InputGuardrailService(), listings);
+    flow.setMediaTransfer(media);
   }
 
   private String lastText(String from) {
@@ -74,8 +76,66 @@ class PostPropertyFlowServiceTest {
     flow.handle("91001", "Ravi", "Sunny 2BHK", "text");
     assertTrue(lastText("91001").contains("description"));
     flow.handle("91001", "Ravi", "Near the park with metro access", "text");
-    assertEquals("Posted! ref abcdef.", lastText("91001"));
+    assertEquals(PostPropertyFlowService.STATE_MEDIA, store.get("91001").getState());
+    assertTrue(lastText("91001").contains("photos/videos"));
+    flow.handle("91001", "Ravi", "SKIP", "text");
+    assertEquals("Posted! ref abcdef. 0 photo/video file(s) saved with this property.", lastText("91001"));
     assertEquals(PostPropertyFlowService.STATE_DONE, store.get("91001").getState());
+  }
+
+  private void mediaSession() {
+    var session = new ConversationSession();
+    session.setChannel("whatsapp"); session.setChannelUserId("91001");
+    session.setState(PostPropertyFlowService.STATE_MEDIA);
+    session.setContext("{\"postDraft\":{\"listingId\":\"abcdef12-3456-7890-abcd-ef1234567890\"}}");
+    store.put("91001", session);
+  }
+
+  @Test void multipleAttachmentsShareListingAndDuplicateDoesNotUploadOrReplyAgain() {
+    mediaSession();
+    String id = "abcdef12-3456-7890-abcd-ef1234567890";
+    when(media.upload(id, "photo1", "image")).thenReturn("listings/" + id + "/photo.jpg");
+    when(media.upload(id, "video1", "video")).thenReturn("listings/" + id + "/video.mp4");
+    flow.handleMedia("91001", "photo1", "image");
+    flow.handleMedia("91001", "photo1", "image");
+    flow.handleMedia("91001", "video1", "video");
+    verify(media, org.mockito.Mockito.times(1)).upload(id, "photo1", "image");
+    verify(whatsapp, never()).sendText(any(), any());
+    // Recreate the service to prove context, including duplicate detection, is persisted.
+    flow = new PostPropertyFlowService(sessions, whatsapp, new InputGuardrailService(), listings);
+    flow.setMediaTransfer(media);
+    flow.handleMedia("91001", "photo1", "image");
+    flow.handle("91001", "Ravi", "DONE", "text");
+    assertTrue(lastText("91001").contains("2 photo/video file(s) saved"));
+    assertTrue(store.get("91001").getContext().contains("listings/" + id));
+  }
+
+  @Test void failedConfirmationCanBeRetriedWithoutUploadingAgain() {
+    mediaSession();
+    String id = "abcdef12-3456-7890-abcd-ef1234567890";
+    String key = "listings/" + id + "/photo.jpg";
+    when(media.upload(id, "photo1", "image")).thenReturn(key);
+    org.mockito.Mockito.doThrow(new IllegalStateException("unavailable")).doNothing()
+      .when(media).confirm(id, key);
+    flow.handleMedia("91001", "photo1", "image");
+    flow.handle("91001", "Ravi", "DONE", "text");
+    assertEquals(PostPropertyFlowService.STATE_MEDIA, store.get("91001").getState());
+    flow.handle("91001", "Ravi", "RETRY", "text");
+    flow.handle("91001", "Ravi", "DONE", "text");
+    verify(media, org.mockito.Mockito.times(1)).upload(id, "photo1", "image");
+    assertTrue(lastText("91001").contains("1 photo/video file(s) saved"));
+  }
+
+  @Test void photosBeforeMediaStepDoNotAdvanceOrRepeatSlotPrompt() {
+    flow.handle("91001", "Ravi", "post property", "text");
+    flow.handle("91001", "Ravi", "SALE", "text");
+    org.mockito.Mockito.clearInvocations(whatsapp);
+    flow.handleMedia("91001", "early1", "image");
+    flow.handleMedia("91001", "early2", "image");
+    assertEquals(PostPropertyFlowService.STATE_PROPERTY_TYPE, store.get("91001").getState());
+    verify(whatsapp, org.mockito.Mockito.times(1)).sendText(eq("91001"), contains("resend"));
+    flow.handle("91001", "Ravi", "Villa", "text");
+    assertEquals(PostPropertyFlowService.STATE_LOCATION, store.get("91001").getState());
   }
 
   @Test

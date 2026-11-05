@@ -20,7 +20,7 @@ import org.springframework.web.server.ResponseStatusException;
 /**
  * Plain-text slot machine for posting a property. No interactive cards:
  * listingType (RENT/SALE) -&gt; propertyType -&gt; cityCode/localityCode
- * -&gt; bedrooms 0-20 -&gt; priceInr positive -&gt; title -&gt; description.
+ * -&gt; bedrooms 0-20 -&gt; priceInr positive -&gt; title -&gt; description -&gt; media -&gt; DONE.
  * The draft lives in the session context under {@code postDraft.*}. The
  * 5-active-listings pre-check fails fast before the first question.
  */
@@ -33,6 +33,7 @@ public class PostPropertyFlowService {
   static final String STATE_PRICE = "POST_PRICE";
   static final String STATE_TITLE = "POST_TITLE";
   static final String STATE_DESCRIPTION = "POST_DESCRIPTION";
+  static final String STATE_MEDIA = "POST_MEDIA";
   static final String STATE_DONE = "DONE";
   static final String CHANNEL = "whatsapp";
 
@@ -41,7 +42,7 @@ public class PostPropertyFlowService {
 
   private static final List<String> ORDER = List.of(
     STATE_LISTING_TYPE, STATE_PROPERTY_TYPE, STATE_LOCATION,
-    STATE_BEDROOMS, STATE_PRICE, STATE_TITLE, STATE_DESCRIPTION);
+    STATE_BEDROOMS, STATE_PRICE, STATE_TITLE, STATE_DESCRIPTION, STATE_MEDIA);
 
   private static final Logger log = LoggerFactory.getLogger(PostPropertyFlowService.class);
 
@@ -49,6 +50,14 @@ public class PostPropertyFlowService {
   private final WhatsAppClient whatsapp;
   private final InputGuardrailService guardrail;
   private final MarketplaceListingsClient listings;
+  private ListingMediaTransfer mediaTransfer;
+  private final Object[] senderLocks = java.util.stream.IntStream.range(0, 64)
+    .mapToObj(i -> new Object()).toArray();
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setMediaTransfer(ListingMediaTransfer mediaTransfer) { this.mediaTransfer = mediaTransfer; }
+
+  private Object lock(String from) { return senderLocks[Math.floorMod(from.hashCode(), senderLocks.length)]; }
 
   public PostPropertyFlowService(
       com.milobroker.concierge.repository.ConversationSessionRepository sessions,
@@ -72,6 +81,10 @@ public class PostPropertyFlowService {
 
   /** Advances (or starts) the post flow for one inbound message. */
   public void handle(String from, String senderName, String text, String messageType) {
+    synchronized (lock(from)) { handleText(from, senderName, text, messageType); }
+  }
+
+  private void handleText(String from, String senderName, String text, String messageType) {
     Optional<ConversationSession> existing =
       sessions.findFirstByChannelAndChannelUserIdOrderByUpdatedAtDesc(CHANNEL, from);
     if (existing.isEmpty() || !ORDER.contains(existing.get().getState())) {
@@ -95,6 +108,32 @@ public class PostPropertyFlowService {
     ConversationSession session = existing.get();
     Map<String, String> draft = readDraft(session);
     String raw = text == null ? "" : text.trim();
+    if (STATE_MEDIA.equals(session.getState())) {
+      if (raw.equalsIgnoreCase("DONE") || raw.equalsIgnoreCase("SKIP")) {
+        long count = draft.keySet().stream().filter(k -> k.startsWith("media:")).count();
+        long pending = draft.keySet().stream().filter(k -> k.startsWith("pendingMedia:")).count();
+        if (pending > 0 && !raw.equalsIgnoreCase("SKIP")) {
+          whatsapp.sendText(from, "Some uploads need confirmation. Reply RETRY to finish saving them, or SKIP to finish with the saved files.");
+          return;
+        }
+        session.setState(STATE_DONE);
+        sessions.save(session);
+        whatsapp.sendText(from, "Posted! ref " + draft.get("listingId").substring(0, 6)
+          + ". " + count + " photo/video file(s) saved with this property.");
+      } else if (raw.equalsIgnoreCase("RETRY")) {
+        for (String key : List.copyOf(draft.keySet())) {
+          if (key.startsWith("pendingMedia:")) {
+            session = sessions.findFirstByChannelAndChannelUserIdOrderByUpdatedAtDesc(CHANNEL, from).orElseThrow();
+            draft = readDraft(session);
+            saveMedia(from, session, draft, key.substring(13), null);
+          }
+        }
+        whatsapp.sendText(from, "Reply DONE to finish, or send more photos/videos.");
+      } else {
+        whatsapp.sendText(from, mediaPrompt());
+      }
+      return;
+    }
     if (raw.equalsIgnoreCase("RESTART")) {
       draft.clear();
       session.setState(STATE_LISTING_TYPE);
@@ -284,11 +323,11 @@ public class PostPropertyFlowService {
         draft.get("listingType"), draft.get("propertyType"), draft.get("cityCode"),
         draft.get("localityCode"), Integer.parseInt(draft.get("bedrooms")),
         Long.parseLong(draft.get("priceInr")));
-      draft.clear();
-      session.setState(STATE_DONE);
+      draft.put("listingId", id);
+      session.setState(STATE_MEDIA);
       writeDraft(session, draft);
       sessions.save(session);
-      whatsapp.sendText(from, "Posted! ref " + id.substring(0, Math.min(6, id.length())) + ".");
+      whatsapp.sendText(from, "Your listing is live. " + mediaPrompt());
     } catch (ResponseStatusException ex) {
       log.warn("Post create rejected for {}", from, ex);
       whatsapp.sendText(from, "I could not post that: " + ex.getReason()
@@ -298,6 +337,65 @@ public class PostPropertyFlowService {
       whatsapp.sendText(from, "Something went wrong posting your property. "
         + "Please reply to try again.");
     }
+  }
+
+  /** Each attachment belongs to the same listing; acknowledge the collection once at DONE. */
+  public void handleMedia(String from, String mediaId, String type) {
+    synchronized (lock(from)) {
+      var existing = sessions.findFirstByChannelAndChannelUserIdOrderByUpdatedAtDesc(CHANNEL, from);
+      if (existing.isEmpty()) {
+        whatsapp.sendText(from, "Say 'post a property' first. I'll ask for photos after the property details.");
+        return;
+      }
+      var session = existing.get();
+      var draft = readDraft(session);
+      if (mediaId != null && draft.containsKey("media:" + mediaId)) return;
+      if (!STATE_MEDIA.equals(session.getState())) {
+        if (!draft.containsKey("earlyMediaNotice")) {
+          draft.put("earlyMediaNotice", "true");
+          writeDraft(session, draft);
+          sessions.save(session);
+          whatsapp.sendText(from, "Please finish the property details first, then resend these photos/videos when I ask for them.");
+        }
+        return;
+      }
+      if (mediaId == null || mediaId.isBlank()) {
+        whatsapp.sendText(from, "I couldn't read that attachment. Please resend the photo or video.");
+        return;
+      }
+      long count = draft.keySet().stream().filter(k -> k.startsWith("media:") || k.startsWith("pendingMedia:")).count();
+      if (count >= 10 && !draft.containsKey("pendingMedia:" + mediaId)) {
+        whatsapp.sendText(from, "You can attach up to 10 photos/videos per post. Reply DONE to finish.");
+        return;
+      }
+      saveMedia(from, session, draft, mediaId, type);
+    }
+  }
+
+  private void saveMedia(String from, ConversationSession session, Map<String, String> draft,
+      String mediaId, String type) {
+    try {
+      String key = draft.get("pendingMedia:" + mediaId);
+      if (key == null) {
+        key = mediaTransfer.upload(draft.get("listingId"), mediaId, type);
+        draft.put("pendingMedia:" + mediaId, key);
+        writeDraft(session, draft);
+        session = sessions.save(session);
+      }
+      mediaTransfer.confirm(draft.get("listingId"), key);
+      draft.remove("pendingMedia:" + mediaId);
+      draft.put("media:" + mediaId, key);
+      writeDraft(session, draft);
+      sessions.save(session);
+    } catch (Exception ex) {
+      // Presigned URLs and message content must not appear in application logs.
+      log.warn("Listing attachment could not be saved: {}", ex.getClass().getSimpleName());
+      whatsapp.sendText(from, "That file wasn't fully saved. If already uploaded, reply RETRY; otherwise resend it (photo up to 10 MB, video up to 16 MB). Reply SKIP to finish with saved files.");
+    }
+  }
+
+  private static String mediaPrompt() {
+    return "Send up to 10 property photos/videos now. I'll group them with this listing and confirm the total when you reply DONE. Reply SKIP to finish without more files.";
   }
 
   static String parsePropertyType(String raw) {
@@ -411,8 +509,7 @@ public class PostPropertyFlowService {
       if (draft == null) {
         return out;
       }
-      for (String key : List.of("listingType", "propertyType", "cityCode", "localityCode",
-          "bedrooms", "priceInr", "title", "description")) {
+      for (String key : draft.keySet()) {
         String value = Jsons.string(draft, key);
         if (value != null) {
           out.put(key, value);
