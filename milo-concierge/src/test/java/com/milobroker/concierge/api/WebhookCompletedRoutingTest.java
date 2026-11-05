@@ -48,6 +48,22 @@ class WebhookCompletedRoutingTest {
   }
 
   @Test
+  void imageAndVideoIdsReachThePostingFlow() {
+    when(onboarding.profile("911234567890")).thenReturn(
+      new ProfileDto("911234567890", "Ravi", "RENTAL", "KA", "BLR", true));
+    var payload = """
+      {"entry":[{"changes":[{"value":{"messages":[
+        {"from":"911234567890","type":"image","image":{"id":"photo1"}},
+        {"from":"911234567890","type":"video","video":{"id":"video1"}}
+      ]}}]}]}
+      """;
+    assertEquals(HttpStatus.OK, webhook().receive(payload, null).getStatusCode());
+    verify(router).receiveMedia("911234567890", "photo1", "image");
+    verify(router).receiveMedia("911234567890", "video1", "video");
+    verify(router, never()).reply(any(), any(), any(), any());
+  }
+
+  @Test
   void incompleteUserStaysOnWelcomePath() {
     when(onboarding.profile("911234567890")).thenReturn(
       new ProfileDto("911234567890", null, null, null, null, false));

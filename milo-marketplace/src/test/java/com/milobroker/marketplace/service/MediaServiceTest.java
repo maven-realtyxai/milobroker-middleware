@@ -58,6 +58,39 @@ class MediaServiceTest {
   }
 
   @Test
+  void activePrototypeListingAcceptsMediaInSameFolder() {
+    UUID id = UUID.randomUUID();
+    when(listings.findById(id)).thenReturn(Optional.of(listing("ACTIVE")));
+    when(media.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    when(signer.presignPut(anyString(), anyString(), anyString(), anyLong(), any(Duration.class)))
+      .thenReturn("https://s3/put");
+    var photo = service.uploadUrl(id, new UploadUrlRequest("IMAGE", "image/jpeg", 1024L));
+    var video = service.uploadUrl(id, new UploadUrlRequest("VIDEO", "video/mp4", 2048L));
+    org.junit.jupiter.api.Assertions.assertTrue(photo.objectKey().startsWith("listings/" + id + "/"));
+    org.junit.jupiter.api.Assertions.assertTrue(video.objectKey().startsWith("listings/" + id + "/"));
+    org.junit.jupiter.api.Assertions.assertNotEquals(photo.objectKey(), video.objectKey());
+  }
+
+  @Test
+  void closedListingRejectsAttachments() {
+    when(listings.findById(any())).thenReturn(Optional.of(listing("CLOSED")));
+    var ex = assertThrows(ResponseStatusException.class,
+      () -> service.uploadUrl(UUID.randomUUID(), new UploadUrlRequest("IMAGE", "image/jpeg", 10L)));
+    assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, ex.getStatusCode());
+  }
+
+  @Test
+  void repeatedConfirmationIsSafe() {
+    when(listings.findById(any())).thenReturn(Optional.of(listing("ACTIVE")));
+    var row = new ListingMedia();
+    row.setObjectKey("key"); row.setUploadStatus("READY");
+    when(media.findByListingIdAndObjectKey(any(), any())).thenReturn(Optional.of(row));
+    when(signer.presignGet(anyString(), anyString(), any(Duration.class))).thenReturn("https://s3/get");
+    assertEquals("READY", service.confirm(UUID.randomUUID(), "key").uploadStatus());
+    org.mockito.Mockito.verify(media, org.mockito.Mockito.never()).save(any());
+  }
+
+  @Test
   void oversizeUploadIsRejected() {
     when(listings.findById(any())).thenReturn(Optional.of(listing("DRAFT")));
     ResponseStatusException ex = assertThrows(ResponseStatusException.class,

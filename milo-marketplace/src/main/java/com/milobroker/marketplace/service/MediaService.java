@@ -45,9 +45,9 @@ public class MediaService {
   public UploadUrlResponse uploadUrl(UUID listingId, UploadUrlRequest request) {
     requireConfigured();
     PropertyListing listing = findListing(listingId);
-    if (!"DRAFT".equals(listing.getStatus()) && !"PENDING".equals(listing.getStatus())) {
+    if (!Set.of("DRAFT", "PENDING", "ACTIVE").contains(listing.getStatus())) {
       throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-        "Media can only be added while the listing is being prepared");
+        "Media can only be added to DRAFT, PENDING or ACTIVE listings");
     }
     String mediaType = mediaType(request.mediaType());
     String contentType = contentType(request.contentType(), mediaType);
@@ -70,6 +70,7 @@ public class MediaService {
     findListing(listingId);
     ListingMedia row = media.findByListingIdAndObjectKey(listingId, objectKey)
       .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Media not found"));
+    if ("READY".equals(row.getUploadStatus())) return record(row, true);
     if (!"PENDING".equals(row.getUploadStatus())) {
       throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
         "Only PENDING uploads can be confirmed");
